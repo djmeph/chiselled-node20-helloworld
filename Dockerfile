@@ -1,12 +1,10 @@
 ARG UBUNTU_RELEASE=22.04
 
-# first, build the "chisel" image with ../Dockerfile
-# docker build .. --build-arg UBUNTU_RELEASE=22.04 -t chisel:22.04
-
+# Prerequsite: Build Chisel image from example at https://github.com/valentincanonical/chisel/blob/examples/Dockerfile
 FROM chisel:${UBUNTU_RELEASE} as installer
 WORKDIR /staging
 RUN [ "chisel", "cut", "--release", "ubuntu-22.04", \
-    "--root", "/staging/", "libc6_libs", "libstdc++6_libs" ]
+    "--root", "/staging/", "libstdc++6_libs" ]
 
 FROM public.ecr.aws/lts/ubuntu:${UBUNTU_RELEASE} AS builder
 WORKDIR /app
@@ -29,4 +27,4 @@ COPY --from=builder /app .
 EXPOSE 3000
 CMD [ "node", "app.js" ]
 
-# docker run --rm -it $(docker build . -q -f helloworld.dockerfile)
+# docker run --rm -it $(docker build . -q)
