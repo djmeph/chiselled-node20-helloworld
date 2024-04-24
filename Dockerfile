@@ -1,32 +1,41 @@
 ARG UBUNTU_RELEASE=22.04
 
-# first, build the "chisel" image with ../Dockerfile
-# docker build .. --build-arg UBUNTU_RELEASE=22.04 -t chisel:22.04
+FROM public.ecr.aws/ubuntu/ubuntu:${UBUNTU_RELEASE}_stable AS installer
+ARG NODE_VERSION
+RUN groupadd --system --gid 1001 nodejs && adduser --system --uid 1001 nx
 
-FROM chisel:${UBUNTU_RELEASE} as installer
+# Install apt dependencies
+RUN apt-get update && apt-get install -y python3 make g++ curl gnupg2 ca-certificates xz-utils && apt-get clean 
+
+# Node install layer
+RUN curl -s -L https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz | tar xJf - -C /usr --strip-components=1 && \
+    npm install -g yarn node-gyp && \
+    npm cache clean --force
+
+# Current release v0.9.1 March 14, 2024 includes breaking change to canonical/chisel-releases
+RUN curl -sSfL https://github.com/canonical/chisel/releases/download/v0.9.1/chisel_v0.9.1_linux_amd64.tar.gz | tar xz -C /usr/bin/ chisel    
+
+
+FROM installer AS builder
 WORKDIR /staging
 RUN [ "chisel", "cut", "--release", "ubuntu-22.04", \
-    "--root", "/staging/", "libc6_libs", "libstdc++6_libs" ]
+    "--root", "/staging/", \
+    "bash_bins", \
+    "libstdc++6_libs" ]    
 
-FROM public.ecr.aws/lts/ubuntu:${UBUNTU_RELEASE} AS builder
-WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates curl gnupg
-RUN mkdir -p /etc/apt/keyrings
-RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-ENV NODE_MAJOR=20
-RUN echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-RUN apt-get update
-RUN apt-get install -y nodejs
-RUN npm install -g yarn
-COPY app.js package.json yarn.lock ./
-RUN yarn install
+WORKDIR /src
+# Copy package.json, yarn lockfile, and .npmrc with Github token to /src
+COPY package.json yarn.lock ./
+# Install node modules, cleanup yarn cache, remove package.json, yarn.lock, and .npmrc
+RUN yarn --prod --frozen-lockfile && yarn cache clean
 
 FROM scratch
-COPY --from=installer [ "/staging/", "/" ]
-COPY --from=builder /usr/bin/node /usr/bin/
-WORKDIR /app
-COPY --from=builder /app .
+COPY --from=builder /staging/ /
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+COPY --from=builder /usr/bin/node /usr/bin/node
+WORKDIR /src
+COPY --from=builder /src .
+COPY app.js .
 EXPOSE 3000
-CMD [ "node", "app.js" ]
-
-# docker run --rm -it $(docker build . -q -f helloworld.dockerfile)
+CMD ["node", "app.js"]
